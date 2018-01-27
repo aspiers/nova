@@ -22,6 +22,7 @@ import random
 import string
 import time
 
+import os_traits
 from oslo_log import log as logging
 from oslo_utils.fixture import uuidsentinel as uuids
 
@@ -367,6 +368,20 @@ class ProviderUsageBaseTestCase(test.TestCase, InstanceHelperMixin):
 
     microversion = 'latest'
 
+    # These must match the capabilities in
+    # nova.virt.fake.FakeDriver.capabilities
+    expected_capability_traits = sorted([
+        os_traits.COMPUTE_NET_ATTACH_INTERFACE,
+        os_traits.COMPUTE_NET_ATTACH_INTERFACE_WITH_TAG,
+        os_traits.COMPUTE_VOLUME_ATTACH_WITH_TAG,
+        os_traits.COMPUTE_VOLUME_EXTEND,
+        os_traits.COMPUTE_VOLUME_MULTI_ATTACH,
+        os_traits.COMPUTE_TRUSTED_CERTS,
+        'CUSTOM_COMPUTE_HAS_IMAGECACHE',
+        'CUSTOM_COMPUTE_SUPPORTS_EVACUATE',
+        'CUSTOM_COMPUTE_SUPPORTS_MIGRATE_TO_SAME_HOST'
+    ])
+
     def setUp(self):
         self.flags(compute_driver=self.compute_driver)
         super(ProviderUsageBaseTestCase, self).setUp()
@@ -437,6 +452,9 @@ class ProviderUsageBaseTestCase(test.TestCase, InstanceHelperMixin):
 
     def _create_trait(self, trait):
         return self.placement_api.put('/traits/%s' % trait, {}, version='1.6')
+
+    def _delete_trait(self, trait):
+        return self.placement_api.delete('/traits/%s' % trait, version='1.6')
 
     def _get_provider_traits(self, provider_uuid):
         return self.placement_api.get(
