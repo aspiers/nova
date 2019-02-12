@@ -2373,6 +2373,34 @@ class LibvirtConfigGuestFeatureHyperV(LibvirtConfigGuestFeature):
         return root
 
 
+class LibvirtConfigGuestSEVLaunchSecurity(LibvirtConfigObject):
+
+    def __init__(self, **kwargs):
+        super(LibvirtConfigGuestSEVLaunchSecurity, self).__init__(
+            root_name='launchSecurity', **kwargs)
+
+        self.cbitpos = None
+        self.reduced_phys_bits = None
+
+    def format_dom(self):
+        root = super(LibvirtConfigGuestSEVLaunchSecurity, self).format_dom()
+
+        root.set('type', 'sev')
+        policy = etree.Element('policy')
+        policy.text = '0x0033'  # hardcoded default according to the spec
+        root.append(policy)
+
+        cbitpos = etree.Element('cbitpos')
+        cbitpos.text = str(self.cbitpos)
+        root.append(cbitpos)
+
+        reducedPhysBits = etree.Element('reducedPhysBits')
+        reducedPhysBits.text = str(self.reduced_phys_bits)
+        root.append(reducedPhysBits)
+
+        return root
+
+
 class LibvirtConfigGuest(LibvirtConfigObject):
 
     def __init__(self, **kwargs):
@@ -2409,6 +2437,7 @@ class LibvirtConfigGuest(LibvirtConfigObject):
         self.metadata = []
         self.idmaps = []
         self.perf_events = []
+        self.launch_security = None
 
     def _format_basic_props(self, root):
         root.append(self._text_node("uuid", self.uuid))
@@ -2501,6 +2530,10 @@ class LibvirtConfigGuest(LibvirtConfigObject):
             perfs.append(event)
         root.append(perfs)
 
+    def _format_sev(self, root):
+        if self.launch_security is not None:
+            root.append(self.launch_security.format_dom())
+
     def format_dom(self):
         root = super(LibvirtConfigGuest, self).format_dom()
 
@@ -2528,6 +2561,8 @@ class LibvirtConfigGuest(LibvirtConfigObject):
         self._format_idmaps(root)
 
         self._format_perf_events(root)
+
+        self._format_sev(root)
 
         return root
 

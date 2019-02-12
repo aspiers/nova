@@ -2196,6 +2196,23 @@ class LibvirtConfigGuestFeatureTest(LibvirtConfigBaseTest):
 
 class LibvirtConfigGuestTest(LibvirtConfigBaseTest):
 
+    def test_launch_security(self):
+        # test that sev-specific bits are added to the xml
+
+        obj = config.LibvirtConfigGuestSEVLaunchSecurity()
+        obj.cbitpos = 47
+        obj.reduced_phys_bits = 1
+
+        xml = obj.to_xml()
+        launch_security_expected = """
+            <launchSecurity type="sev">
+              <policy>0x0033</policy>
+              <cbitpos>47</cbitpos>
+              <reducedPhysBits>1</reducedPhysBits>
+            </launchSecurity>"""
+
+        self.assertXmlEqual(launch_security_expected, xml)
+
     def test_config_lxc(self):
         obj = config.LibvirtConfigGuest()
         obj.virt_type = "lxc"
@@ -2454,6 +2471,11 @@ class LibvirtConfigGuestTest(LibvirtConfigBaseTest):
 
         obj.add_device(disk)
 
+        launch_security = config.LibvirtConfigGuestSEVLaunchSecurity()
+        launch_security.cbitpos = 47
+        launch_security.reduced_phys_bits = 1
+        obj.launch_security = launch_security
+
         xml = obj.to_xml()
         self.assertXmlEqual(xml, """
             <domain type="kvm">
@@ -2513,6 +2535,11 @@ class LibvirtConfigGuestTest(LibvirtConfigBaseTest):
                   <target bus="virtio" dev="/dev/vda"/>
                 </disk>
               </devices>
+              <launchSecurity type="sev">
+                <policy>0x0033</policy>
+                <cbitpos>47</cbitpos>
+                <reducedPhysBits>1</reducedPhysBits>
+              </launchSecurity>
             </domain>""")
 
     def test_config_uefi(self):
