@@ -578,6 +578,8 @@ class LibvirtGenericVIFDriver(object):
                    inst_type, virt_type, host):
         vif_type = vif['type']
         vnic_type = vif['vnic_type']
+        sev_required = bool(
+            inst_type.extra_specs.get('traits:HW_CPU_AMD_SEV', False))
 
         # instance.display_name could be unicode
         instance_repr = utils.get_obj_repr_unicode(instance)
@@ -594,9 +596,12 @@ class LibvirtGenericVIFDriver(object):
         # Try os-vif codepath first
         vif_obj = os_vif_util.nova_to_osvif_vif(vif)
         if vif_obj is not None:
-            return self._get_config_os_vif(instance, vif_obj, image_meta,
+            conf = self._get_config_os_vif(instance, vif_obj, image_meta,
                                            inst_type, virt_type, host,
                                            vnic_type)
+            if conf and conf.model and 'virtio' in conf.model:
+                conf.driver_iommu = sev_required
+            return conf
 
         # Legacy non-os-vif codepath
         vif_slug = self._normalize_vif_type(vif_type)

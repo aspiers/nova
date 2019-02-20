@@ -919,6 +919,13 @@ class LibvirtDriver(driver.ComputeDriver):
         # conversion which will return value of type unicode.
         return uri and str(uri)
 
+    def _sev_required(self):
+        if not self.supports_amd_sev:
+            return False
+
+        sev = flavor.extra_specs.get('traits:HW_CPU_AMD_SEV', False)
+        return bool(sev)
+
     def instance_exists(self, instance):
         """Efficient override of base instance_exists method."""
         try:
@@ -1617,6 +1624,8 @@ class LibvirtDriver(driver.ComputeDriver):
             disk_info['unit'] = self._get_scsi_controller_max_unit(guest) + 1
 
         conf = self._get_volume_config(connection_info, disk_info)
+        if 'virtio' in disk_info['bus']:
+            conf.driver_iommu = self._sev_required(instance.flavor)
 
         self._check_discard_for_attach_volume(conf, instance)
 
@@ -1746,6 +1755,8 @@ class LibvirtDriver(driver.ComputeDriver):
         # eventually do this for us.
         self._connect_volume(context, new_connection_info, instance)
         conf = self._get_volume_config(new_connection_info, disk_info)
+        if 'virtio' in disk_info['bus']:
+            conf.driver_iommu = self._sev_required(instance.flavor)
         if not conf.source_path:
             self._disconnect_volume(context, new_connection_info, instance)
             raise NotImplementedError(_("Swap only supports host devices"))
@@ -4107,6 +4118,8 @@ class LibvirtDriver(driver.ComputeDriver):
                                  inst_type['extra_specs'],
                                  self._host.get_version(),
                                  disk_unit=disk_unit)
+        if 'virtio' in disk_info['bus']:
+            conf.driver_iommu = self._sev_required(instance.flavor)
         return conf
 
     def _get_guest_fs_config(self, instance, name, image_type=None):
@@ -4123,7 +4136,8 @@ class LibvirtDriver(driver.ComputeDriver):
         block_device_mapping = driver.block_device_info_get_mapping(
             block_device_info)
         mount_rootfs = CONF.libvirt.virt_type == "lxc"
-        scsi_controller = self._get_scsi_controller(image_meta)
+        scsi_controller = self._get_scsi_controller(
+            image_meta, sev_required=self._sev_required(instance.flavor))
 
         if scsi_controller and scsi_controller.model == 'virtio-scsi':
             # The virtio-scsi can handle up to 256 devices but the
@@ -4241,6 +4255,8 @@ class LibvirtDriver(driver.ComputeDriver):
                     info['unit'] = disk_mapping['unit']
                     disk_mapping['unit'] += 1
             cfg = self._get_volume_config(connection_info, info)
+            if 'virtio' in info['bus']:
+                cfg.driver_iommu = self._sev_required(instance.flavor)
             devices.append(cfg)
             vol['connection_info'] = connection_info
             vol.save()
@@ -4254,7 +4270,7 @@ class LibvirtDriver(driver.ComputeDriver):
         return devices
 
     @staticmethod
-    def _get_scsi_controller(image_meta):
+    def _get_scsi_controller(image_meta, sev_required=False):
         """Return scsi controller or None based on image meta"""
         if image_meta.properties.get('hw_scsi_model'):
             hw_scsi_model = image_meta.properties.hw_scsi_model
@@ -4262,6 +4278,8 @@ class LibvirtDriver(driver.ComputeDriver):
             scsi_controller.type = 'scsi'
             scsi_controller.model = hw_scsi_model
             scsi_controller.index = 0
+            if 'virtio' in hw_scsi_model:
+                scsi_controller.driver_iommu = sev_required
             return scsi_controller
 
     def _get_host_sysinfo_serial_hardware(self):
@@ -4886,6 +4904,9 @@ class LibvirtDriver(driver.ComputeDriver):
             if (video.type not in VALID_VIDEO_DEVICES):
                 raise exception.InvalidVideoMode(model=video.type)
 
+        if 'virtio' in video.type:
+            video.driver_iommu = self._sev_required(flavor)
+
         # Set video memory, only if the flavor's limit is set
         video_ram = image_meta.properties.get('hw_video_ram', 0)
         max_vram = int(flavor.extra_specs.get('hw_video:ram_max_mb', 0))
@@ -4915,6 +4936,9 @@ class LibvirtDriver(driver.ComputeDriver):
         if (rng_path and not os.path.exists(rng_path)):
             raise exception.RngDeviceNotExist(path=rng_path)
         rng_device.backend = rng_path
+        # For KVM, there is only virtio variant of the RNG device, so
+        # there is no need to check its "model" attribute
+        rng_device.driver_iommu = self._sev_required(flavor)
         guest.add_device(rng_device)
 
     def _set_qemu_guest_agent(self, guest, flavor, instance, image_meta):
@@ -5379,6 +5403,10 @@ class LibvirtDriver(driver.ComputeDriver):
         guest.vcpus = flavor.vcpus
         allowed_cpus = hardware.get_vcpu_pin_set()
 
+        # sev should be detected early because if it is required,
+        # iommu-enabled driver should be set for all devices
+        sev_required = flavor.extra_specs.get('traits:HW_CPU_AMD_SEV', False)
+
         guest_numa_config = self._get_guest_numa_config(
             instance.numa_topology, flavor, allowed_cpus, image_meta)
 
@@ -5474,7 +5502,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
         self._guest_add_watchdog_action(guest, flavor, image_meta)
 
-        self._guest_add_memory_balloon(guest)
+        self._guest_add_memory_balloon(guest, sev_required=sev_required)
 
         if mdevs:
             self._guest_add_mdevs(guest, mdevs)
@@ -5497,7 +5525,7 @@ class LibvirtDriver(driver.ComputeDriver):
             guest.add_device(channel)
 
     @staticmethod
-    def _guest_add_memory_balloon(guest):
+    def _guest_add_memory_balloon(guest, sev_required=False):
         virt_type = guest.virt_type
         # Memory balloon device only support 'qemu/kvm' and 'xen' hypervisor
         if (virt_type in ('xen', 'qemu', 'kvm') and
@@ -5505,6 +5533,8 @@ class LibvirtDriver(driver.ComputeDriver):
             balloon = vconfig.LibvirtConfigMemoryBalloon()
             if virt_type in ('qemu', 'kvm'):
                 balloon.model = 'virtio'
+                if sev_required:
+                    balloon.driver_iommu = True
             else:
                 balloon.model = 'xen'
             balloon.period = CONF.libvirt.mem_stats_period_seconds

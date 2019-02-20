@@ -2558,6 +2558,60 @@ class LibvirtConnTestCase(test.NoDBTestCase,
         self.assertTrue(membacking.locked)
         self.assertFalse(membacking.sharedpages)
 
+    @mock.patch.object(host.Host, 'get_domain_capabilities')
+    def test_get_guest_config_sev(self, fake_domain_caps):
+        sev_feature = vconfig.LibvirtConfigDomainCapsFeatureSev()
+        sev_feature.cbitpos = 47
+        sev_feature.reduced_phys_bits = 1
+        domain_caps = vconfig.LibvirtConfigDomainCaps()
+        domain_caps._features = vconfig.LibvirtConfigDomainCapsFeatures()
+        domain_caps._features.features = [sev_feature]
+        fake_domain_caps.return_value = domain_caps
+
+        drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), True)
+
+        test_instance = copy.deepcopy(self.test_instance)
+        test_instance["display_name"] = "purple tomVatoes"
+        test_instance['system_metadata']['owner_project_name'] = 'sweetshop'
+        test_instance['system_metadata']['owner_user_name'] = 'cupcake'
+
+        ctxt = context.RequestContext(project_id=123,
+                                      project_name="aubergine",
+                                      user_id=456,
+                                      user_name="pie")
+
+        extra_specs = {
+            "traits:HW_CPU_AMD_SEV": "required",
+        }
+        flavor = objects.Flavor(name='m1.small',
+                                memory_mb=6,
+                                vcpus=28,
+                                root_gb=496,
+                                ephemeral_gb=8128,
+                                swap=33550336,
+                                extra_specs=extra_specs)
+
+        instance_ref = objects.Instance(**test_instance)
+        instance_ref.flavor = flavor
+        image_meta = objects.ImageMeta.from_dict(self.test_image_meta)
+
+        disk_info = blockinfo.get_disk_info(CONF.libvirt.virt_type,
+                                            instance_ref,
+                                            image_meta)
+
+        cfg = drvr._get_guest_config(instance_ref,
+                                     _fake_network_info(self, 1),
+                                     image_meta, disk_info,
+                                     context=ctxt)
+        # all disks are expected to be virtio, thus iommu should be on
+        self.assertTrue(cfg.devices[0].driver_iommu)
+        self.assertTrue(cfg.devices[1].driver_iommu)
+        self.assertTrue(cfg.devices[2].driver_iommu)
+        # interface
+        self.assertTrue(cfg.devices[3].driver_iommu)
+        # memballoon
+        self.assertTrue(cfg.devices[8].driver_iommu)
+
     def test_get_guest_memory_backing_config_file_backed(self):
         self.flags(file_backed_memory=1024, group="libvirt")
 
