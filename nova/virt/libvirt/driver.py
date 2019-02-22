@@ -84,8 +84,9 @@ from nova.console import serial as serial_console
 from nova.console import type as ctype
 from nova import context as nova_context
 from nova import crypto
+from nova.db import constants as db_const
 from nova import exception
-from nova.i18n import _
+from nova.i18n import _, _LW
 from nova import image
 from nova.network import model as network_model
 from nova import objects
@@ -6822,6 +6823,17 @@ class LibvirtDriver(driver.ComputeDriver):
             },
         }
 
+        memory_enc_slots = self._get_memory_encrypted_slots()
+        if memory_enc_slots > 0:
+            result[orc.MEM_ENCRYPTION_CONTEXT] = {
+                'total': memory_enc_slots,
+                'min_unit': 1,
+                'max_unit': memory_enc_slots,
+                'step_size': 1,
+                'allocation_ratio': 1.0,
+                'reserved': 0,
+            }
+
         # If a sharing DISK_GB provider exists in the provider tree, then our
         # storage is shared, and we should not report the DISK_GB inventory in
         # the compute node provider.
@@ -6865,6 +6877,35 @@ class LibvirtDriver(driver.ComputeDriver):
         # Now that we updated the ProviderTree, we want to store it locally
         # so that spawn() or other methods can access it thru a getter
         self.provider_tree = copy.deepcopy(provider_tree)
+
+    def _get_memory_encrypted_slots(self):
+        slots = CONF.libvirt.num_memory_encrypted_guests
+        if not self.supports_amd_sev:
+            if slots and slots > 0:
+                LOG.warning(_LW("Host is configured with "
+                                "libvirt.num_memory_encrypted_guests set to "
+                                "%d, but is not SEV-capable."), slots)
+            return 0
+
+        # NOTE(aspiers): Auto-detection of the number of available
+        # slots for AMD SEV is not yet possible, so honor the
+        # configured value, or impose no limit if this is not
+        # specified.  This does incur a risk that if operators don't
+        # read the instructions and configure the maximum correctly,
+        # the maximum could be exceeded resulting in SEV guests
+        # failing at launch-time.  However at least SEV guests will
+        # launch until the maximum, and when auto-detection code is
+        # added later, an upgrade will magically fix the issue.
+        #
+        # Note also that the configured value can be 0 on an
+        # SEV-capable host, since there might conceivably be good
+        # reasons for the operator to want to disable SEV even when
+        # it's available (e.g. due to performance impact, or
+        # implementation bugs which may surface later).
+        if slots is not None:
+            return slots
+        else:
+            return db_const.MAX_INT
 
     @staticmethod
     def _is_reshape_needed_vgpu_on_root(provider_tree, nodename):

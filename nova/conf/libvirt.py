@@ -838,6 +838,36 @@ Related options:
 * ``virt_type`` must be set to ``kvm`` or ``qemu``.
 * ``ram_allocation_ratio`` must be set to 1.0.
 """),
+    cfg.IntOpt('num_memory_encrypted_guests',
+               default=None,
+               min=0,
+               help="""
+Maximum number of guests with encrypted memory which can run
+concurrently on this compute host.
+
+For now this is only relevant for AMD machines which support SEV
+(Secure Encrypted Virtualisation).  Such machines have a limited
+number of slots in their memory controller for storing encryption
+keys.  Each running guest with encrypted memory will consume one of
+these slots.
+
+The option may be reused for other equivalent technologies in
+the future.
+
+A value of ``None`` means auto-detect the inventory, or if this is not
+possible, set the inventory to 0 on hosts which don't support SEV, and
+on hosts which do, don't impose any limit.
+
+.. note::
+   Auto-detection of the inventory is not yet possible, therefore it is
+   strongly recommended to set this on AMD SEV-capable hosts in order to
+   avoid the placement service choosing an SEV host whose slots are all
+   in use.
+
+Related options:
+
+* ``virt_type`` must be set to ``kvm``.
+"""),
 ]
 
 libvirt_imagebackend_opts = [
