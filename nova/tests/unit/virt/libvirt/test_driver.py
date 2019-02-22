@@ -55,6 +55,7 @@ from oslo_utils import units
 from oslo_utils import uuidutils
 from oslo_utils import versionutils
 import six
+from six.moves import builtins
 from six.moves import range
 
 from nova.api.metadata import base as instance_metadata
@@ -21402,6 +21403,10 @@ class LibvirtDriverTestCase(test.NoDBTestCase, TraitsComparisonMixin):
 
         # Fake the fact that mdev1 is existing but mdev2 not
         def _exists(path):
+            # Keep the AMD SEV support check happy
+            if path == '/sys/module/kvm_amd/parameters/sev':
+                return False
+
             # Just verify what we ask
             self.assertIn('/sys/bus/mdev/devices/', path)
             return True if uuids.mdev1 in path else False
@@ -23100,3 +23105,56 @@ class TestLibvirtMultiattach(test.NoDBTestCase):
     #     calls = [mock.call(lv_ver=libvirt_driver.MIN_LIBVIRT_MULTIATTACH),
     #              mock.call(hv_ver=(2, 10, 0))]
     #     has_min_version.assert_has_calls(calls)
+
+
+class TestLibvirtSEV(test.NoDBTestCase):
+    """Libvirt driver tests for AMD SEV support."""
+
+    def setUp(self):
+        super(TestLibvirtSEV, self).setUp()
+        self.useFixture(fakelibvirt.FakeLibvirtFixture())
+        self.driver = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), True)
+
+    @mock.patch.object(os.path, 'exists', return_value=False)
+    def test_kernel_parameter_missing(self, fake_exists):
+        self.assertFalse(self.driver._kernel_supports_amd_sev())
+        fake_exists.assert_called_once_with(
+            '/sys/module/kvm_amd/parameters/sev')
+
+    @mock.patch.object(os.path, 'exists', return_value=True)
+    @mock.patch.object(builtins, 'open', mock.mock_open(read_data="0\n"))
+    def test_kernel_parameter_zero(self, fake_exists):
+        self.assertFalse(self.driver._kernel_supports_amd_sev())
+        fake_exists.assert_called_once_with(
+            '/sys/module/kvm_amd/parameters/sev')
+
+    @mock.patch.object(os.path, 'exists', return_value=True)
+    @mock.patch.object(builtins, 'open', mock.mock_open(read_data="1\n"))
+    def test_kernel_parameter_one(self, fake_exists):
+        self.assertTrue(self.driver._kernel_supports_amd_sev())
+        fake_exists.assert_called_once_with(
+            '/sys/module/kvm_amd/parameters/sev')
+
+    @mock.patch.object(os.path, 'exists', return_value=True)
+    @mock.patch.object(builtins, 'open', mock.mock_open(read_data="1\n"))
+    def test_unsupported_without_feature(self, fake_exists):
+        self.driver._set_amd_sev_support()
+        self.assertFalse(self.driver.supports_amd_sev)
+
+    vc = fakelibvirt.virConnect
+
+    @mock.patch.object(os.path, 'exists', return_value=True)
+    @mock.patch.object(builtins, 'open', mock.mock_open(read_data="1\n"))
+    @mock.patch.object(vc, '_domain_capability_features',
+        new=vc._domain_capability_features_with_SEV_unsupported)
+    def test_unsupported_with_feature(self, fake_exists):
+        self.driver._set_amd_sev_support()
+        self.assertFalse(self.driver.supports_amd_sev)
+
+    @mock.patch.object(os.path, 'exists', return_value=True)
+    @mock.patch.object(builtins, 'open', mock.mock_open(read_data="1\n"))
+    @mock.patch.object(vc, '_domain_capability_features',
+        new=vc._domain_capability_features_with_SEV)
+    def test_supported_with_feature(self, fake_exists):
+        self.driver._set_amd_sev_support()
+        self.assertTrue(self.driver.supports_amd_sev)
