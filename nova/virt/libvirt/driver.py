@@ -54,6 +54,7 @@ from os_brick.encryptors import luks as luks_encryptor
 from os_brick import exception as brick_exception
 from os_brick.initiator import connector
 import os_resource_classes as orc
+import os_traits as ot
 from oslo_concurrency import processutils
 from oslo_log import log as logging
 from oslo_serialization import base64
@@ -142,6 +143,8 @@ DEFAULT_UEFI_LOADER_PATH = {
     "x86_64": "/usr/share/OVMF/OVMF_CODE.fd",
     "aarch64": "/usr/share/AAVMF/AAVMF_CODE.fd"
 }
+
+SEV_KERNEL_PARAM_FILE = '/sys/module/kvm_amd/parameters/sev'
 
 MAX_CONSOLE_BYTES = 100 * units.Ki
 
@@ -354,6 +357,10 @@ class LibvirtDriver(driver.ComputeDriver):
 
         self.vif_driver = libvirt_vif.LibvirtGenericVIFDriver()
 
+        # AMD SEV is conditional on support in the hardware, kernel,
+        # qemu, and libvirt, all determined in init_host().
+        self.supports_amd_sev = False
+
         # TODO(mriedem): Long-term we should load up the volume drivers on
         # demand as needed rather than doing this on startup, as there might
         # be unsupported volume drivers in this list based on the underlying
@@ -537,6 +544,8 @@ class LibvirtDriver(driver.ComputeDriver):
 
         self._set_multiattach_support()
 
+        self._set_amd_sev_support()
+
         self._check_file_backed_memory_support()
 
         if (CONF.libvirt.virt_type == 'lxc' and
@@ -672,6 +681,39 @@ class LibvirtDriver(driver.ComputeDriver):
             LOG.debug('Volume multiattach is not supported based on current '
                       'versions of QEMU and libvirt. QEMU must be less than '
                       '2.10 or libvirt must be greater than or equal to 3.10.')
+
+    def _kernel_supports_amd_sev(self):
+        if not os.path.exists(SEV_KERNEL_PARAM_FILE):
+            LOG.debug("%s does not exist", SEV_KERNEL_PARAM_FILE)
+            return False
+
+        with open(SEV_KERNEL_PARAM_FILE) as f:
+            contents = f.read()
+            LOG.debug("%s contains [%s]", SEV_KERNEL_PARAM_FILE, contents)
+            return contents == "1\n"
+
+    def _set_amd_sev_support(self):
+        # Check to see if AMD SEV (Secure Encrypted Virtualization) is
+        # supported.
+        if not self._kernel_supports_amd_sev():
+            LOG.info("kernel doesn't support AMD SEV")
+            self.supports_amd_sev = False
+            return
+
+        domain_caps = self._host.get_domain_capabilities()
+        for arch in domain_caps:
+            for machine_type in domain_caps[arch]:
+                LOG.debug("Checking SEV support for arch %s "
+                          "and machine type %s", arch, machine_type)
+                for feature in domain_caps[arch][machine_type].features:
+                    if (isinstance(feature,
+                                   vconfig.LibvirtConfigDomainCapsFeatureSev)
+                            and feature.supported):
+                        LOG.info("AMD SEV support detected")
+                        self.supports_amd_sev = True
+                        return
+
+        LOG.info("No AMD SEV support detected for any (arch, machine_type)")
 
     def _check_file_backed_memory_support(self):
         if CONF.libvirt.file_backed_memory:
@@ -9631,6 +9673,16 @@ class LibvirtDriver(driver.ComputeDriver):
                            nova.privsep.fs.FS_FORMAT_XFS]
 
     def _get_cpu_traits(self):
+        """Get CPU-related traits to be set and unset on the host's resource
+        provider.
+
+        :return: A dict of trait names mapped to boolean values or None.
+        """
+        traits = self._get_cpu_feature_traits()
+        traits[ot.HW_CPU_X86_AMD_SEV] = self.supports_amd_sev
+        return traits
+
+    def _get_cpu_feature_traits(self):
         """Get CPU traits of VMs based on guest CPU model config:
         1. if mode is 'host-model' or 'host-passthrough', use host's
         CPU features.

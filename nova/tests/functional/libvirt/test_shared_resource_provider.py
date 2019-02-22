@@ -13,36 +13,20 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import fixtures
 from oslo_utils.fixture import uuidsentinel as uuids
 import unittest
 
 from nova.compute import instance_actions
 from nova import conf
-from nova.tests.functional import integrated_helpers
+from nova.tests.functional.libvirt import integrated_helpers
 import nova.tests.unit.image.fake
-from nova.tests.unit.virt.libvirt import fakelibvirt
 
 
 CONF = conf.CONF
 
 
 class SharedStorageProviderUsageTestCase(
-        integrated_helpers.ProviderUsageBaseTestCase):
-    compute_driver = 'libvirt.LibvirtDriver'
-
-    def setUp(self):
-        super(SharedStorageProviderUsageTestCase, self).setUp()
-        self.useFixture(fakelibvirt.FakeLibvirtFixture(stub_os_vif=False))
-        self.useFixture(
-            fixtures.MockPatch(
-                'nova.virt.libvirt.driver.LibvirtDriver.init_host'))
-        self.useFixture(
-            fixtures.MockPatch(
-                'nova.virt.libvirt.driver.LibvirtDriver.spawn'))
-        self.compute = self._start_compute(CONF.host)
-        nodename = self.compute.manager._get_nodename(None)
-        self.host_uuid = self._get_provider_uuid_by_host(nodename)
+        integrated_helpers.LibvirtProviderUsageBaseTestCase):
 
     # TODO(efried): Bug #1784020
     @unittest.expectedFailure

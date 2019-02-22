@@ -55,6 +55,7 @@ from oslo_utils import units
 from oslo_utils import uuidutils
 from oslo_utils import versionutils
 import six
+from six.moves import builtins
 from six.moves import range
 
 from nova.api.metadata import base as instance_metadata
@@ -18553,7 +18554,8 @@ class TestUpdateProviderTree(test.NoDBTestCase):
             },
         }
 
-    @mock.patch('nova.virt.libvirt.driver.LibvirtDriver._get_cpu_traits',
+    @mock.patch('nova.virt.libvirt.driver.LibvirtDriver.'
+                '_get_cpu_feature_traits',
                 new=mock.Mock(return_value=cpu_traits))
     @mock.patch('nova.virt.libvirt.driver.LibvirtDriver._get_gpu_inventories')
     @mock.patch('nova.virt.libvirt.driver.LibvirtDriver._get_local_gb_info',
@@ -18687,7 +18689,8 @@ class TestUpdateProviderTree(test.NoDBTestCase):
         self.assertEqual(set(['HW_CPU_X86_AVX512F', 'HW_CPU_X86_BMI']),
                          self.pt.data(self.cn_rp['uuid']).traits)
 
-    @mock.patch('nova.virt.libvirt.driver.LibvirtDriver._get_cpu_traits',
+    @mock.patch('nova.virt.libvirt.driver.LibvirtDriver.'
+                '_get_cpu_feature_traits',
                 new=mock.Mock(return_value=cpu_traits))
     @mock.patch('nova.virt.libvirt.driver.LibvirtDriver.'
                 '_get_mediated_device_information')
@@ -18819,7 +18822,8 @@ class TestUpdateProviderTree(test.NoDBTestCase):
         self.assertEqual(original_allocations[uuids.consumer2],
                          allocations[uuids.consumer2])
 
-    @mock.patch('nova.virt.libvirt.driver.LibvirtDriver._get_cpu_traits',
+    @mock.patch('nova.virt.libvirt.driver.LibvirtDriver.'
+                '_get_cpu_feature_traits',
                 new=mock.Mock(return_value=cpu_traits))
     @mock.patch('nova.virt.libvirt.driver.LibvirtDriver._get_gpu_inventories')
     @mock.patch('nova.virt.libvirt.driver.LibvirtDriver._get_local_gb_info',
@@ -21500,6 +21504,10 @@ class LibvirtDriverTestCase(test.NoDBTestCase, TraitsComparisonMixin):
 
         # Fake the fact that mdev1 is existing but mdev2 not
         def _exists(path):
+            # Keep the AMD SEV support check happy
+            if path == '/sys/module/kvm_amd/parameters/sev':
+                return False
+
             # Just verify what we ask
             self.assertIn('/sys/bus/mdev/devices/', path)
             return True if uuids.mdev1 in path else False
@@ -21578,7 +21586,7 @@ class LibvirtDriverTestCase(test.NoDBTestCase, TraitsComparisonMixin):
         """
         self.flags(cpu_mode='host-passthrough', group='libvirt')
         self.assertTraitsEqual(['HW_CPU_X86_AESNI', 'HW_CPU_X86_VMX'],
-                               self.drvr._get_cpu_traits())
+                               self.drvr._get_cpu_feature_traits())
 
     @mock.patch('nova.virt.libvirt.host.libvirt.Connection.baselineCPU')
     def test_cpu_traits_with_mode_none(self, mock_baseline):
@@ -21589,7 +21597,7 @@ class LibvirtDriverTestCase(test.NoDBTestCase, TraitsComparisonMixin):
         mock_baseline.return_value = _fake_qemu64_cpu_feature
         self.assertTraitsEqual(['HW_CPU_X86_SSE', 'HW_CPU_X86_SVM',
                                 'HW_CPU_X86_MMX', 'HW_CPU_X86_SSE2'],
-                               self.drvr._get_cpu_traits())
+                               self.drvr._get_cpu_feature_traits())
 
         mock_baseline.assert_called_with([u'''<cpu>
   <arch>x86_64</arch>
@@ -21625,7 +21633,7 @@ class LibvirtDriverTestCase(test.NoDBTestCase, TraitsComparisonMixin):
                 'HW_CPU_X86_SSE2',
                 'HW_CPU_X86_SSE',
                 'HW_CPU_X86_MMX'
-            ], self.drvr._get_cpu_traits()
+            ], self.drvr._get_cpu_feature_traits()
         )
         mock_baseline.assert_called_with([u'''<cpu>
   <arch>x86_64</arch>
@@ -21644,7 +21652,7 @@ class LibvirtDriverTestCase(test.NoDBTestCase, TraitsComparisonMixin):
             'this function is not supported by the connection driver',
             error_code=fakelibvirt.VIR_ERR_NO_SUPPORT)
         mock_baseline.side_effect = not_supported_exc
-        self.assertTraitsEqual([], self.drvr._get_cpu_traits())
+        self.assertTraitsEqual([], self.drvr._get_cpu_feature_traits())
 
     @mock.patch('nova.virt.libvirt.host.libvirt.Connection.getCapabilities')
     @mock.patch('nova.virt.libvirt.host.libvirt.Connection.baselineCPU')
@@ -21687,7 +21695,7 @@ class LibvirtDriverTestCase(test.NoDBTestCase, TraitsComparisonMixin):
                 raise missing_model_exc
         mock_baseline.side_effect = mocked_baseline
 
-        self.assertTraitsEqual([], self.drvr._get_cpu_traits())
+        self.assertTraitsEqual([], self.drvr._get_cpu_feature_traits())
 
     def test_cpu_traits_with_invalid_virt_type(self):
         """Test getting CPU traits when using a virt_type that doesn't support
@@ -21698,7 +21706,7 @@ class LibvirtDriverTestCase(test.NoDBTestCase, TraitsComparisonMixin):
                    virt_type='lxc',
                    group='libvirt'
                    )
-        self.assertRaises(exception.Invalid, self.drvr._get_cpu_traits)
+        self.assertRaises(exception.Invalid, self.drvr._get_cpu_feature_traits)
 
     @mock.patch('nova.virt.libvirt.host.libvirt.Connection.getCapabilities')
     @mock.patch('nova.virt.libvirt.utils.cpu_features_to_traits')
@@ -21724,7 +21732,7 @@ class LibvirtDriverTestCase(test.NoDBTestCase, TraitsComparisonMixin):
                 </host>
             </capabilities>
             """
-        self.drvr._get_cpu_traits()
+        self.drvr._get_cpu_feature_traits()
         self.assertItemsEqual(['pcid', 'erms'], mock_to_traits.call_args[0][0])
 
     @mock.patch('nova.virt.libvirt.host.libvirt.Connection.baselineCPU')
@@ -21746,7 +21754,7 @@ class LibvirtDriverTestCase(test.NoDBTestCase, TraitsComparisonMixin):
                 <feature policy='require' name='pcid'/>
             </cpu>
             """
-        self.drvr._get_cpu_traits()
+        self.drvr._get_cpu_feature_traits()
         mock_baseline.assert_called_with([u'''<cpu>
   <arch>x86_64</arch>
   <model>IvyBridge</model>
@@ -21774,7 +21782,7 @@ class LibvirtDriverTestCase(test.NoDBTestCase, TraitsComparisonMixin):
                 <feature policy='require' name='erms'/>
             </cpu>
             """
-        self.drvr._get_cpu_traits()
+        self.drvr._get_cpu_feature_traits()
         self.assertItemsEqual(['pcid', 'erms'], mock_to_traits.call_args[0][0])
 
     def test_cpu_traits_with_mode_none_and_invalid_virt_type(self):
@@ -21784,7 +21792,7 @@ class LibvirtDriverTestCase(test.NoDBTestCase, TraitsComparisonMixin):
         self.flags(cpu_mode='none',
                    virt_type='lxc',
                    group='libvirt')
-        self.assertIsNone(self.drvr._get_cpu_traits())
+        self.assertIsNone(self.drvr._get_cpu_feature_traits())
 
     @mock.patch('nova.virt.libvirt.host.libvirt.Connection.getCapabilities')
     @mock.patch('nova.virt.libvirt.host.libvirt.Connection.baselineCPU')
@@ -21811,7 +21819,7 @@ class LibvirtDriverTestCase(test.NoDBTestCase, TraitsComparisonMixin):
            <vendor>IBM</vendor>
         </cpu>
         '''
-        self.drvr._get_cpu_traits()
+        self.drvr._get_cpu_feature_traits()
         mock_baseline.assert_called_with([u'''<cpu>
   <arch>ppc64le</arch>
   <model>POWER8</model>
@@ -23256,3 +23264,56 @@ class TestLibvirtMultiattach(test.NoDBTestCase):
     #     calls = [mock.call(lv_ver=libvirt_driver.MIN_LIBVIRT_MULTIATTACH),
     #              mock.call(hv_ver=(2, 10, 0))]
     #     has_min_version.assert_has_calls(calls)
+
+
+class TestLibvirtSEV(test.NoDBTestCase):
+    """Libvirt driver tests for AMD SEV support."""
+
+    def setUp(self):
+        super(TestLibvirtSEV, self).setUp()
+        self.useFixture(fakelibvirt.FakeLibvirtFixture())
+        self.driver = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), True)
+
+    @mock.patch.object(os.path, 'exists', return_value=False)
+    def test_kernel_parameter_missing(self, fake_exists):
+        self.assertFalse(self.driver._kernel_supports_amd_sev())
+        fake_exists.assert_called_once_with(
+            '/sys/module/kvm_amd/parameters/sev')
+
+    @mock.patch.object(os.path, 'exists', return_value=True)
+    @mock.patch.object(builtins, 'open', mock.mock_open(read_data="0\n"))
+    def test_kernel_parameter_zero(self, fake_exists):
+        self.assertFalse(self.driver._kernel_supports_amd_sev())
+        fake_exists.assert_called_once_with(
+            '/sys/module/kvm_amd/parameters/sev')
+
+    @mock.patch.object(os.path, 'exists', return_value=True)
+    @mock.patch.object(builtins, 'open', mock.mock_open(read_data="1\n"))
+    def test_kernel_parameter_one(self, fake_exists):
+        self.assertTrue(self.driver._kernel_supports_amd_sev())
+        fake_exists.assert_called_once_with(
+            '/sys/module/kvm_amd/parameters/sev')
+
+    @mock.patch.object(os.path, 'exists', return_value=True)
+    @mock.patch.object(builtins, 'open', mock.mock_open(read_data="1\n"))
+    def test_unsupported_without_feature(self, fake_exists):
+        self.driver._set_amd_sev_support()
+        self.assertFalse(self.driver.supports_amd_sev)
+
+    vc = fakelibvirt.virConnect
+
+    @mock.patch.object(os.path, 'exists', return_value=True)
+    @mock.patch.object(builtins, 'open', mock.mock_open(read_data="1\n"))
+    @mock.patch.object(vc, '_domain_capability_features',
+        new=vc._domain_capability_features_with_SEV_unsupported)
+    def test_unsupported_with_feature(self, fake_exists):
+        self.driver._set_amd_sev_support()
+        self.assertFalse(self.driver.supports_amd_sev)
+
+    @mock.patch.object(os.path, 'exists', return_value=True)
+    @mock.patch.object(builtins, 'open', mock.mock_open(read_data="1\n"))
+    @mock.patch.object(vc, '_domain_capability_features',
+        new=vc._domain_capability_features_with_SEV)
+    def test_supported_with_feature(self, fake_exists):
+        self.driver._set_amd_sev_support()
+        self.assertTrue(self.driver.supports_amd_sev)
