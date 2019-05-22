@@ -4994,6 +4994,10 @@ class LibvirtDriver(driver.ComputeDriver):
                     MIN_LIBVIRT_FILE_BACKED_DISCARD_VERSION,
                     MIN_QEMU_FILE_BACKED_DISCARD_VERSION):
                 membacking.discard = True
+        if self._sev_required(flavor):
+            if not membacking:
+                membacking = vconfig.LibvirtConfigGuestMemoryBacking()
+            membacking.locked = True
 
         return membacking
 
