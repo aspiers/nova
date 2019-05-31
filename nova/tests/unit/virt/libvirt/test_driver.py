@@ -2603,6 +2603,9 @@ class LibvirtConnTestCase(test.NoDBTestCase,
                                      _fake_network_info(self, 1),
                                      image_meta, disk_info,
                                      context=ctxt)
+        # SEV-related tag should be set
+        self.assertIsInstance(cfg.launch_security,
+                              vconfig.LibvirtConfigGuestSEVLaunchSecurity)
         # all disks are expected to be virtio, thus iommu should be on
         self.assertTrue(cfg.devices[0].driver_iommu)
         self.assertTrue(cfg.devices[1].driver_iommu)
