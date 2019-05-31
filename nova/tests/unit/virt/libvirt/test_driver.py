@@ -2473,11 +2473,14 @@ class LibvirtConnTestCase(test.NoDBTestCase,
     def _test_get_guest_memory_backing_config(
             self, host_topology, inst_topology, numatune):
         drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), True)
+        flavor = objects.Flavor(memory_mb=4096, vcpus=4, root_gb=496,
+                                ephemeral_gb=8128, swap=33550336, name='fake',
+                                extra_specs={})
         with mock.patch.object(
                 drvr, "_get_host_numa_topology",
                 return_value=host_topology):
             return drvr._get_guest_memory_backing_config(
-                inst_topology, numatune, {})
+                inst_topology, numatune, flavor)
 
     @mock.patch.object(host.Host,
                        'has_min_version', return_value=True)
@@ -2538,10 +2541,17 @@ class LibvirtConnTestCase(test.NoDBTestCase,
         self.assertIsNone(result)
 
     def test_get_guest_memory_backing_config_realtime(self):
-        flavor = {"extra_specs": {
+        extra_specs = {
             "hw:cpu_realtime": "yes",
             "hw:cpu_policy": "dedicated"
-        }}
+        }
+        flavor = objects.Flavor(name='m1.small',
+                                memory_mb=6,
+                                vcpus=28,
+                                root_gb=496,
+                                ephemeral_gb=8128,
+                                swap=33550336,
+                                extra_specs=extra_specs)
         drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), True)
         membacking = drvr._get_guest_memory_backing_config(
             None, None, flavor)
