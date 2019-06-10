@@ -231,3 +231,174 @@ class TestRequestFilter(test.NoDBTestCase):
         log_lines = [c[0][0] for c in mock_log.debug.call_args_list]
         self.assertIn('added required trait', log_lines[0])
         self.assertIn('took %.1f seconds', log_lines[1])
+
+    def _test_encrypted_memory_support_not_required(self, **kwargs):
+        reqspec = objects.RequestSpec(**kwargs)
+        filter_result = request_filter.require_encrypted_memory_support(
+                self.context, reqspec)
+        self.assertFalse(filter_result)
+        if 'flavor' in reqspec and 'extra_specs' in reqspec.flavor:
+            self.assertNotIn('resources:MEM_ENCRYPTION_CONTEXT',
+                             reqspec.flavor.extra_specs)
+
+    def test_require_encrypted_memory_support_disabled(self):
+        self._test_encrypted_memory_support_not_required()
+
+    def test_require_encrypted_memory_support_empty_flavor(self):
+        self._test_encrypted_memory_support_not_required(
+            flavor=objects.Flavor())
+
+    def test_require_encrypted_memory_support_empty_extra_specs(self):
+        self._test_encrypted_memory_support_not_required(
+            flavor=objects.Flavor(extra_specs={}))
+
+    def test_require_encrypted_memory_support_false_extra_spec(self):
+        for extra_spec in ('0', 'false', 'False'):
+            self._test_encrypted_memory_support_not_required(
+                flavor=objects.Flavor(
+                    extra_specs={'hw:mem_encryption': extra_spec})
+            )
+
+    def test_require_encrypted_memory_support_empty_image(self):
+        self._test_encrypted_memory_support_not_required(
+            image=objects.ImageMeta())
+
+    def test_require_encrypted_memory_support_empty_image_props(self):
+        self._test_encrypted_memory_support_not_required(
+            image=objects.ImageMeta(properties=objects.ImageMetaProps()))
+
+    def test_require_encrypted_memory_support_false_image_prop(self):
+        for image_prop in ('0', 'false', 'False'):
+            self._test_encrypted_memory_support_not_required(
+                image=objects.ImageMeta(
+                    properties=objects.ImageMetaProps(
+                        hw_mem_encryption=image_prop))
+            )
+
+    def test_require_encrypted_memory_support_both_false(self):
+        for extra_spec in ('0', 'false', 'False'):
+            for image_prop in ('0', 'false', 'False'):
+                self._test_encrypted_memory_support_not_required(
+                    flavor=objects.Flavor(
+                        extra_specs={'hw:mem_encryption': extra_spec}),
+                    image=objects.ImageMeta(
+                        properties=objects.ImageMetaProps(
+                            hw_mem_encryption=image_prop))
+                )
+
+    @mock.patch.object(request_filter, 'LOG')
+    def _test_encrypted_memory_support_conflict(self, extra_spec,
+                                                image_prop_in, image_prop_out,
+                                                mock_log):
+        # NOTE(aspiers): hw_mem_encryption image property is a
+        # FlexibleBooleanField, so the result should always be coerced
+        # to a boolean.
+        self.assertIsInstance(image_prop_out, bool)
+
+        flavor_name = 'm1.tiny'
+        image_name = 'cirros'
+        flavor = objects.Flavor(
+            name=flavor_name,
+            extra_specs={'hw:mem_encryption': extra_spec}
+        )
+        image = objects.ImageMeta(
+            name=image_name,
+            properties=objects.ImageMetaProps(
+                hw_mem_encryption=image_prop_in)
+        )
+        reqspec = objects.RequestSpec(flavor=flavor, image=image)
+
+        # Sanity check that our test request spec has an extra_specs
+        # dict, which is needed in order for there to be a conflict.
+        self.assertIn('flavor', reqspec)
+        self.assertIn('extra_specs', reqspec.flavor)
+
+        error = (
+            "Flavor %(flavor_name)s has hw:mem_encryption extra spec "
+            "explicitly set to %(flavor_val)s, conflicting with "
+            "image %(image_name)s which has hw_mem_encryption property "
+            "explicitly set to %(image_val)s"
+        )
+        exc = self.assertRaises(
+            exception.RequestFilterFailed,
+            request_filter.require_encrypted_memory_support,
+            self.context, reqspec
+        )
+        error_data = {
+            'flavor_name': flavor_name,
+            'flavor_val': extra_spec,
+            'image_name': image_name,
+            'image_val': image_prop_out,
+        }
+        self.assertEqual(("Scheduling failed: " + error) % error_data,
+                         str(exc))
+        mock_log.error.assert_has_calls([
+            mock.call(error, error_data)
+        ])
+
+    def test_require_encrypted_memory_support_conflict1(self):
+        for extra_spec in ('0', 'false', 'False'):
+            for image_prop_in in ('1', 'true', 'True'):
+                self._test_encrypted_memory_support_conflict(
+                    extra_spec, image_prop_in, True
+                )
+
+    def test_require_encrypted_memory_support_conflict2(self):
+        for extra_spec in ('1', 'true', 'True'):
+            for image_prop_in in ('0', 'false', 'False'):
+                self._test_encrypted_memory_support_conflict(
+                    extra_spec, image_prop_in, False
+                )
+
+    @mock.patch.object(request_filter, 'LOG')
+    def _test_encrypted_memory_support_required(self, requesters, mock_log,
+                                                **kwargs):
+        reqspec = objects.RequestSpec(**kwargs)
+
+        # Sanity check that our test request spec has an extra_specs
+        # dict, which is needed in order to add the required resources
+        # to it.
+        self.assertIn('flavor', reqspec)
+        self.assertIn('extra_specs', reqspec.flavor)
+
+        filter_result = request_filter.require_encrypted_memory_support(
+                self.context, reqspec)
+        self.assertTrue(filter_result)
+        self.assertIn('resources:MEM_ENCRYPTION_CONTEXT',
+                      reqspec.flavor.extra_specs)
+        mock_log.debug.assert_has_calls([
+            mock.call('require_encrypted_memory_support request filter added '
+                      'required resource MEM_ENCRYPTION_CONTEXT due to %s',
+                      requesters)
+        ])
+
+    def test_require_encrypted_memory_support_extra_spec(self):
+        for extra_spec in ('1', 'true', 'True'):
+            self._test_encrypted_memory_support_required(
+                'hw:mem_encryption extra spec',
+                flavor=objects.Flavor(
+                    extra_specs={'hw:mem_encryption': extra_spec})
+            )
+
+    def test_require_encrypted_memory_support_image_prop(self):
+        for image_prop in ('1', 'true', 'True'):
+            self._test_encrypted_memory_support_required(
+                'hw_mem_encryption image property',
+                flavor=objects.Flavor(extra_specs={}),
+                image=objects.ImageMeta(
+                    properties=objects.ImageMetaProps(
+                        hw_mem_encryption=image_prop))
+            )
+
+    def test_require_encrypted_memory_support_both_required(self):
+        for extra_spec in ('1', 'true', 'True'):
+            for image_prop in ('1', 'true', 'True'):
+                self._test_encrypted_memory_support_required(
+                    'hw:mem_encryption extra spec and '
+                    'hw_mem_encryption image property',
+                    flavor=objects.Flavor(
+                        extra_specs={'hw:mem_encryption': extra_spec}),
+                    image=objects.ImageMeta(
+                        properties=objects.ImageMetaProps(
+                            hw_mem_encryption=image_prop))
+                )

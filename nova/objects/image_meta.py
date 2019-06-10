@@ -171,12 +171,15 @@ class ImageMetaProps(base.NovaObject):
     # Version 1.19: Added 'img_hide_hypervisor_id' type field
     # Version 1.20: Added 'traits_required' list field
     # Version 1.21: Added 'hw_time_hpet' field
-    VERSION = '1.21'
+    # Version 1.22: Added 'hw_mem_encryption' field
+    VERSION = '1.22'
 
     def obj_make_compatible(self, primitive, target_version):
         super(ImageMetaProps, self).obj_make_compatible(primitive,
                                                         target_version)
         target_version = versionutils.convert_version_to_tuple(target_version)
+        if target_version < (1, 22):
+            primitive.pop('hw_mem_encryption', None)
         if target_version < (1, 21):
             primitive.pop('hw_time_hpet', None)
         if target_version < (1, 20):
@@ -298,6 +301,10 @@ class ImageMetaProps(base.NovaObject):
         # is not practical to enumerate them all. So we use a free
         # form string
         'hw_machine_type': fields.StringField(),
+
+        # boolean indicating that the guest needs to be booted with
+        # encrypted memory
+        'hw_mem_encryption': fields.FlexibleBooleanField(),
 
         # One of the magic strings 'small', 'any', 'large'
         # or an explicit page size in KB (eg 4, 2048, ...)

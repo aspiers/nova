@@ -14,6 +14,7 @@ import functools
 
 import os_traits
 from oslo_log import log as logging
+from oslo_utils import strutils
 from oslo_utils import timeutils
 
 import nova.conf
@@ -154,10 +155,101 @@ def require_image_type_support(ctxt, request_spec):
     return True
 
 
+def _mem_encryption_extra_spec(request_spec):
+    # Return None if hw:mem_encryption extra spec is not
+    # explicitly set, otherwise the boolean it's set to.
+    if 'flavor' not in request_spec:
+        return None
+
+    if 'extra_specs' not in request_spec.flavor:
+        return None
+
+    val = request_spec.flavor.extra_specs.get('hw:mem_encryption')
+    return val if val is None else strutils.bool_from_string(val)
+
+
+def _mem_encryption_image_prop(request_spec):
+    # Return None if hw_mem_encryption image property is not
+    # explicitly set, otherwise the boolean it's set to.
+    if 'image' not in request_spec:
+        return None
+
+    if 'properties' not in request_spec.image:
+        return None
+
+    # FlexibleBooleanField so coercion to a boolean is handled automatically
+    return request_spec.image.properties.get('hw_mem_encryption')
+
+
+@trace_request_filter
+def require_encrypted_memory_support(ctxt, request_spec):
+    """When the hw:mem_encryption extra spec or the hw_mem_encryption
+    image property are requested, require hosts which can support
+    encryption of the guest memory.
+    """
+    extra_spec = _mem_encryption_extra_spec(request_spec)
+    image_prop = _mem_encryption_image_prop(request_spec)
+
+    if not extra_spec and not image_prop:
+        # Neither require memory encryption, so no further action required.
+        return False
+
+    # Check for conflicts between explicit requirements regarding
+    # memory encryption.
+    if (extra_spec is not None and image_prop is not None and
+            extra_spec != image_prop):
+        # Unfortunately there's no way to avoid this duplication :-(
+        lmsg = (
+            "Flavor %(flavor_name)s has hw:mem_encryption extra spec "
+            "explicitly set to %(flavor_val)s, conflicting with "
+            "image %(image_name)s which has hw_mem_encryption property "
+            "explicitly set to %(image_val)s"
+        )
+        emsg = _(
+            "Flavor %(flavor_name)s has hw:mem_encryption extra spec "
+            "explicitly set to %(flavor_val)s, conflicting with "
+            "image %(image_name)s which has hw_mem_encryption property "
+            "explicitly set to %(image_val)s"
+        )
+        data = {
+            'flavor_name': request_spec.flavor.name,
+            'flavor_val':
+                request_spec.flavor.extra_specs.get('hw:mem_encryption'),
+            'image_name': request_spec.image.name,
+            'image_val':
+                request_spec.image.properties.get('hw_mem_encryption')
+        }
+        LOG.error(lmsg, data)
+        raise exception.RequestFilterFailed(reason=emsg % data)
+
+    # If we get this far, either the extra spec or image property explicitly
+    # specified a requirement regarding memory encryption, and if both did,
+    # they are asking for the same thing.
+    request_spec.flavor.extra_specs['resources:MEM_ENCRYPTION_CONTEXT'] = '1'
+
+    requesters = []
+    if extra_spec:
+        requesters.append("hw:mem_encryption extra spec")
+    if image_prop:
+        requesters.append("hw_mem_encryption image property")
+
+    if not requesters:
+        # This should never happen if the logic above is correct
+        LOG.error("BUG: require_encrypted_memory_support "
+                  "request filter was applied for unknown reason")
+    else:
+        LOG.debug("require_encrypted_memory_support request filter added "
+                  "required resource MEM_ENCRYPTION_CONTEXT due to %s",
+                  " and ".join(requesters))
+
+    return True
+
+
 ALL_REQUEST_FILTERS = [
     require_tenant_aggregate,
     map_az_to_placement_aggregate,
     require_image_type_support,
+    require_encrypted_memory_support,
 ]
 
 
